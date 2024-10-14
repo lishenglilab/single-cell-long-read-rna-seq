@@ -1,4 +1,3 @@
-# 加载必要的库
 library(data.table)
 library(dplyr)
 library(ggplot2)
