@@ -138,3 +138,64 @@ sce.mer <- RunUMAP(sce.mer,reduction="pca",dims=1:30)
 sce.mer <- FindNeighbors(sce.mer, reduction="pca",dims = 1:30)
 sce.mer <- FindClusters(sce.mer, resolution = 0.8)
 saveRDS(sce.mer, file="Result/integration_nanopore.rds")
+
+
+# correlations
+nano_exp = sce_nano@assays$RNA@data
+ill_exp = sce_ill@assays$RNA@data
+common_barcodes = intersect(colnames(nano_exp), colnames(ill_exp))
+nano_exp = nano_exp[, common_barcodes]
+ill_exp = ill_exp[, common_barcodes]
+nano_exp$transcript_id = rownames(nano_exp)
+nano_exp <- nano_exp %>%
+mutate(gene_id = ifelse(str_starts(transcript_id, 'ENSG'),
+gsub('-.*', '', transcript_id),
+id_map$gene_id[match(transcript_id, id_map$transcript_id)]))
+nano_exp = left_join(nano_exp,unique(id_map[,c('gene_id','gene_name')]))
+nano_exp$gene_id = NULL
+nano_exp$transcript_id = NULL
+common_genes = intersect(rownames(nano_exp_sum), rownames(ill_exp))
+nano_exp = nano_exp[nano_exp$gene_name %in% common_genes,]
+
+nano_exp_sum = fread('nano_ge_exp_summed.csv',sep = ',',data.table = F)
+rownames(nano_exp_sum) = nano_exp_sum$gene_name
+nano_exp_sum$gene_name = NULL
+ill_exp = ill_exp[common_genes,]
+nano_exp_sum = nano_exp_sum[common_genes,]
+ill_exp = as.data.frame(as.matrix(ill_exp))
+correlations <- sapply(common_barcodes, function(barcode) {
+  cor(nano_exp_sum[, barcode], ill_exp[, barcode], method = "pearson")
+})
+
+median_cor <- median(correlations)
+set.seed(123)  
+random_correlations <- sapply(1:length(common_barcodes), function(i) {
+  random_barcode <- sample(colnames(ill_exp), 1)
+  cor(nano_exp_sum[, common_barcodes[i]], ill_exp[, random_barcode], method = "pearson")
+})
+
+
+median_random_cor <- median(random_correlations)
+
+plot_data <- data.frame(
+  Type = rep(c("Matched", "Random"), each = length(correlations)),
+  Correlation = c(correlations, random_correlations)
+)
+correlation <- cor(gene_per_cell_sub$Nano, gene_per_cell_sub$Ill)
+p = ggplot(plot_data, aes(x = Type, y = Correlation, fill = Type)) +
+  stat_boxplot(geom = 'errorbar',width = 0.2)+
+  geom_boxplot(outlier.colour = NA) +
+  stat_summary(fun = median, geom = "point", shape = 23, size = 4, fill = "red") +
+  theme_minimal() +
+  labs(x = "Cell Pairing Type",
+       y = "Pearson Correlation")+
+  stat_compare_means(comparisons = list(c('Matched','Random')))
+ggsave(plot = p,'ALL_exp_pearson_cor_boxplot.pdf',width = 6,height = 4)
+
+merged_gene_per_cell = read.table('/data/haowu/sc_long/nano_ill_cor/merged_gene_per_cell.txt',sep = '\t',header = T)
+correlation <- cor(merged_gene_per_cell$Nano, merged_gene_per_cell$Ill)
+p = ggplot(merged_gene_per_cell, aes(x = Nano, y = Ill)) +
+  geom_point(alpha = 0.8) +
+  geom_text(x = min(merged_gene_per_cell$Nano), y = max(merged_gene_per_cell$Ill), label = paste("Pearson correlation =", round(correlation, 2)), hjust = 0, vjust = 1)+
+  theme_bw()
+ggsave(plot = p,'ALL_gene_per_cell_cor_scatter.pdf',width = 6,height = 4)
